@@ -1,0 +1,43 @@
+MODEL = deepseek/deepseek-chat
+PROVIDER_BASE_URL = https://api.deepseek.com/v1
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ [1] Agent: Hunter Tool Baseline Agent >> I'll use the add tool to calculate  │
+│ 17 + 25. [00:16:04 (deepseek/deepseek-chat)] Current: I:381 O:71 R:0         │
+│ ($0.0001) | Total: I:381 O:71 R:0 ($0.0001) | Session: $0.0001 | Context:    │
+│ 0.3% 🟩                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+TOOL_EXECUTED: add(a=17, b=25) -> 42
+╭─ Hunter Tool Baseline Agent - Executing Command ─╮
+│ {"a": 17, "b": 25}                               │
+╰──────────────────────────────────────────────────╯
+
+╭─ Hunter Tool Baseline Agent - add(a=17, b=25) [Completed] ───────────────────╮
+│ add(a=17, b=25) [Total: 0.0s | Tool: 0.0s]                                   │
+│                                                                              │
+│                                                                              │
+│ ╭─ Tool Output ────────────────────────────────────────────────────────────╮ │
+│ │   1 42                                                                   │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│                                                                              │
+│  Current: I:0 O:0 R:0 ($0.0001) | Total: I:381 O:71 R:0 ($0.0000) | Session: │
+│ $0.0001 | Context: 0.0% 🟩                                                   │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│ [2] Agent: Hunter Tool Baseline Agent [00:16:16 (deepseek/deepseek-chat)]    │
+│                                                                              │
+│                                                                              │
+│ The result of 17 + 25 is 42.                                                 │
+│                                                                              │
+│                                                                              │
+│  Current: I:536 O:12 R:0 ($0.0002) | Total: I:917 O:83 R:0 ($0.0002) |       │
+│ Session: $0.0003 | Context: 0.4% 🟩                                          │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+FINAL_OUTPUT = The result of 17 + 25 is **42**.
+TOOL_CALL_COUNT = 1
+TOOL_ARGUMENTS = [(17, 25)]
+TEST03_REAL_TOOL_CALL_PASS
+
+Total CAI Session Cost: $0.000292

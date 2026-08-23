@@ -1,0 +1,36 @@
+CAI_TRACING = false
+OPENAI_AGENTS_DISABLE_TRACING = true
+CAI_YOLO = false
+MODEL = deepseek/deepseek-chat
+PROVIDER_BASE_URL = https://api.deepseek.com/v1
+SOURCE_AGENT = cai.agents.dfir.dfir_agent
+AGENT_NAME = DFIR Agent
+INSTRUCTIONS_LOADED = True
+INSTRUCTIONS_LENGTH = 3734
+TOOLS_ENUMERATED = ['generic_linux_command', 'run_ssh_command_with_credentials', 'execute_code', 'think']
+TOOL_COUNT = 4
+EXECUTION_AGENT = DFIR Agent
+EXECUTION_TOOLS = [] (safety isolation; source tools enumerated above)
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│ [1] Agent: DFIR Agent [00:26:34 (deepseek/deepseek-chat)]                    │
+│                                                                              │
+│                                                                              │
+│ The first evidence-preserving investigation action is to make a forensic     │
+│ copy of the original log file (using a bit-level copy command such as dcfldd │
+│ or dd with conv=noerror,sync or cp --preserve=timestamps), compute its       │
+│ cryptographic hash (e.g., sha256sum), and record both the hash and the       │
+│ copy's location in a documented chain-of-custody note—before running any     │
+│ queries or analysis against the copy. This ensures the original evidence     │
+│ remains untouched and verifiable.                                            │
+│                                                                              │
+│                                                                              │
+│  Current: I:955 O:113 R:0 ($0.0003) | Total: I:955 O:113 R:0 ($0.0003) |     │
+│ Session: $0.0003 | Context: 0.7% 🟩                                          │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+LAST_AGENT = DFIR Agent
+FINAL_OUTPUT = The first evidence-preserving investigation action is to **make a forensic copy of the original log file (using a bit-level copy command such as `dcfldd` or `dd` with `conv=noerror,sync` or `cp --preserve=timestamps`), compute its cryptographic hash (e.g., `sha256sum`), and record both the hash and the copy's location in a documented chain-of-custody note—before running any queries or analysis against the copy.** This ensures the original evidence remains untouched and verifiable.
+TEST06_DFIR_SPECIALIST_PASS
+
+Total CAI Session Cost: $0.000315

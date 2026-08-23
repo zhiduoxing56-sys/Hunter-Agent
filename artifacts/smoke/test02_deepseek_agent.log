@@ -1,0 +1,18 @@
+MODEL = deepseek/deepseek-chat
+PROVIDER_BASE_URL = https://api.deepseek.com/v1
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│ [1] Agent: Hunter Baseline Agent [00:36:52 (deepseek/deepseek-chat)]         │
+│                                                                              │
+│                                                                              │
+│ HUNTER_LLM_PASS                                                              │
+│                                                                              │
+│                                                                              │
+│  Current: I:35 O:8 R:0 ($0.0000) | Total: I:35 O:8 R:0 ($0.0000) | Session:  │
+│ $0.0000 | Context: 0.0% 🟩                                                   │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+FINAL_OUTPUT = HUNTER_LLM_PASS
+TEST02_REAL_DEEPSEEK_LLM_PASS
+
+Total CAI Session Cost: $0.000013

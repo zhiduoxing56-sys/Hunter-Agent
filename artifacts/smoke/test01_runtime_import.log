@@ -1,0 +1,8 @@
+CAI_MODULE = /home/tenggn/projects/Hunter-Agent/third_party/cai_framework-0.5.10/src/cai/__init__.py
+AGENT_CLASS = cai.sdk.agents.agent.Agent
+RUNNER_CLASS = cai.sdk.agents.run.Runner
+CAI_FRAMEWORK_VERSION = 0.5.10
+TEST01_RUNTIME_IMPORT_PASS
+Warning: Could not save usage data after 5 attempts: [Errno 30] Read-only file system: '/home/tenggn/.cai/usage.json.tmp.4'
+
+Total CAI Session Cost: $0.000000
