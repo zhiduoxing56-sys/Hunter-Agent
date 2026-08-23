@@ -1,0 +1,29 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Runtime
+logs/
+runs/
+artifacts/private/
+
+# Security artifacts
+*.pcap
+*.pcapng
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Downloaded upstream archive
+cai_framework-0.5.10.tar.gz
