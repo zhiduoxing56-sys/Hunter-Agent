@@ -37,6 +37,10 @@ PYTHONPATH=.:pentestgpt-core/pentestgpt_agent/src \
   autopenbench_adapter/run_baseline.py --vm=0
 ```
 
+The runner defaults to 14 Executor turns so a RECOVER task can complete a
+focused exploit revalidation and submit a captured flag. Override it only when
+you intentionally want a tighter per-task budget.
+
 The first task is deliberately the smallest web path-traversal task:
 `in-vitro/web_security/vm0`.  The runner gives the frozen agent only the public
 AutoPenBench task text and target identifier.  It starts the upstream Kali and

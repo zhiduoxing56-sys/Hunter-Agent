@@ -269,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--max-decisions", type=int, default=12)
     parser.add_argument("--supervisor-max-turns", type=int, default=4)
-    parser.add_argument("--executor-max-turns", type=int, default=10)
+    parser.add_argument("--executor-max-turns", type=int, default=14)
     args = parser.parse_args(argv)
     return asyncio.run(_run(args))
 
