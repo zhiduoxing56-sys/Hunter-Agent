@@ -1,0 +1,4 @@
+[submodule "pentestgpt-core"]
+	path = pentestgpt-core
+	url = https://github.com/zhiduoxing56-sys/new-Hunter-Agent.git
+	branch = main
