@@ -179,6 +179,10 @@ async def _run(args: argparse.Namespace) -> int:
             max_decisions=args.max_decisions,
             supervisor_max_turns=args.supervisor_max_turns,
             executor_max_turns=args.executor_max_turns,
+            total_tool_budget=args.total_tool_budget,
+            strategy_switch_reserve=args.strategy_switch_reserve,
+            high_priority_reserve=args.high_priority_reserve,
+            ordinary_hypothesis_max_consecutive_turns=args.ordinary_hypothesis_max_consecutive_turns,
         )
     )
     summary: dict[str, Any] | None = None
@@ -270,6 +274,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-decisions", type=int, default=12)
     parser.add_argument("--supervisor-max-turns", type=int, default=4)
     parser.add_argument("--executor-max-turns", type=int, default=14)
+    parser.add_argument("--total-tool-budget", type=int, default=30)
+    parser.add_argument("--strategy-switch-reserve", type=int, default=4)
+    parser.add_argument("--high-priority-reserve", type=int, default=10)
+    parser.add_argument("--ordinary-hypothesis-max-consecutive-turns", type=int, default=3)
     args = parser.parse_args(argv)
     return asyncio.run(_run(args))
 

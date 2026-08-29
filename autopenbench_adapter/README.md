@@ -4,6 +4,11 @@ This directory is an external evaluation harness. It uses the pinned
 `pentestgpt-core` Git submodule and does not modify its prompts, loop, provider
 adapter, or core tools at runtime.
 
+Protocol v1 is the common integration contract; `protocol.py` provides
+`AutoPenBenchProtocolAdapter` as one concrete professional-backend adapter that follows that
+contract. AutoPenBench is an implementation and acceptance target, not part of the Protocol v1
+definition itself.
+
 ## Fresh-clone setup
 
 Clone this repository with its core submodule, then clone the public benchmark
