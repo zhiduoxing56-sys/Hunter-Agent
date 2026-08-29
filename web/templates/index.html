@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hunter-Agent</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-page="upload">
+  <main class="shell narrow">
+    <header class="hero">
+      <p class="eyebrow">SECURITY ANALYSIS</p>
+      <h1>Hunter-Agent</h1>
+      <p class="lede">上传证据文件，由 Hunter 自动识别类型和领域，并路由到 Kong 或 TRUDI。</p>
+    </header>
+    <section class="panel upload-panel">
+      <form id="upload-form">
+        <label class="file-picker" for="file-input">
+          <span class="file-icon">＋</span>
+          <strong id="file-label">选择一个文件</strong>
+          <small>当前支持 Reverse（Kong）与轻量 DFIR（TRUDI）</small>
+        </label>
+        <input id="file-input" name="file" type="file" required>
+        <button id="submit-button" type="submit">开始分析</button>
+      </form>
+      <div id="upload-error" class="error-box hidden" role="alert"></div>
+    </section>
+    <p class="footnote">真实文件类型由 Layer 1 / libmagic 识别，不使用浏览器 MIME 作为判断依据。</p>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

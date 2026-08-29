@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>分析任务 · Hunter-Agent</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-page="task">
+  <main class="shell">
+    <nav><a href="/">← 新建分析</a><span class="brand">Hunter-Agent</span></nav>
+    <header class="task-heading">
+      <div><p class="eyebrow">ANALYSIS TASK</p><h1 id="task-title">正在读取任务…</h1></div>
+      <span id="status-badge" class="badge queued">Queued</span>
+    </header>
+
+    <section class="panel">
+      <h2>任务信息</h2>
+      <dl id="task-info" class="info-grid"></dl>
+    </section>
+
+    <section class="panel">
+      <h2>执行进度</h2>
+      <ol id="event-list" class="timeline"><li class="muted">等待真实事件…</li></ol>
+    </section>
+
+    <section id="error-panel" class="panel error-panel hidden">
+      <h2>分析未完成</h2>
+      <dl id="error-info" class="info-grid"></dl>
+    </section>
+
+    <section id="result-panel" class="panel hidden">
+      <h2>分析结果</h2>
+      <div id="summary" class="summary"></div>
+      <div id="interpretation" class="interpretation"></div>
+      <h3 id="result-detail-heading">函数分析</h3><div id="findings" class="card-list"></div>
+      <h3>分析依据</h3><div id="evidence" class="card-list"></div>
+      <h3>分析文件</h3><div id="artifacts" class="artifact-list"></div>
+      <details class="technical-details"><summary>技术指标</summary><pre id="metrics" class="json-block"></pre></details>
+      <details class="technical-details"><summary>原始输出</summary><pre id="raw-output" class="json-block"></pre></details>
+    </section>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
