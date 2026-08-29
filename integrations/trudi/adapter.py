@@ -32,7 +32,15 @@ from pentestgpt_agent.protocol import (
 from pentestgpt_agent.protocol.contracts import utc_now
 
 from .full_tools import MINIMAL_FULL_TOOLS
-from .parser import artifact_evidence, full_findings, load_full, load_triage, triage_finding
+from .parser import (
+    artifact_evidence,
+    expired_finding_techniques,
+    full_findings,
+    load_full,
+    load_triage,
+    normalize_final_text,
+    triage_finding,
+)
 
 
 @dataclass
@@ -403,10 +411,20 @@ class TrudiAdapter(AgentAdapter):
             )
         primary = value.get("primary", {}) if isinstance(value.get("primary"), dict) else {}
         primary_result = str(primary.get("result") or "").strip()
+        expired_techniques = expired_finding_techniques(value)
+        primary_result = normalize_final_text(primary_result, expired_techniques)
+        safe_primary = dict(primary)
+        if "result" in safe_primary:
+            safe_primary["result"] = primary_result
         summary = (
             primary_result[:2000]
             if primary_result
             else (findings[0].description[:2000] if findings else "TRUDI Full investigation did not produce a final conclusion.")
+        )
+        turn_budget = (
+            value.get("turn_budget", {})
+            if isinstance(value.get("turn_budget"), dict)
+            else {}
         )
         metrics = {
             "mode": "full",
@@ -423,6 +441,18 @@ class TrudiAdapter(AgentAdapter):
             "finding_count": len(findings),
             "available_tool_count": len(MINIMAL_FULL_TOOLS),
             "duration_seconds": float(value.get("duration_seconds", elapsed) or elapsed),
+            "primary_turn_budget": int(turn_budget.get("total", 0) or 0),
+            "investigation_turn_budget": int(
+                turn_budget.get("investigation_budget", 0) or 0
+            ),
+            "completion_turns_reserved": int(
+                turn_budget.get("completion_reserved", 0) or 0
+            ),
+            "investigation_turns_used": int(
+                turn_budget.get("investigation_used", 0) or 0
+            ),
+            "completion_turns_used": int(turn_budget.get("completion_used", 0) or 0),
+            "completion_phase_used": bool(turn_budget.get("completion_phase_used")),
         }
         return AgentResult(
             task_id=prepared.task_spec.task_id,
@@ -442,7 +472,7 @@ class TrudiAdapter(AgentAdapter):
                 "returncode": returncode,
                 "runner_stdout_log": str(context.stdout_path),
                 "runner_stderr_log": str(context.stderr_path),
-                "primary": primary,
+                "primary": safe_primary,
                 "trace": {key: item for key, item in trace.items() if key != "findings"},
                 "paths": value.get("paths", {}),
             },

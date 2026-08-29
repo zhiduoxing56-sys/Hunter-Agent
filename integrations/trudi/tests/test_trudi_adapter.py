@@ -9,7 +9,14 @@ import pytest
 
 from integrations.trudi import TrudiAdapter
 from integrations.trudi.adapter import _full_artifact_id
-from integrations.trudi.full_runner import _classify_failure, _trace_summary
+from integrations.trudi.full_runner import (
+    COMPLETION_TOOLS,
+    _child_environment,
+    _classify_failure,
+    _claude_turn_limit,
+    _trace_summary,
+    _turn_budget,
+)
 from integrations.trudi.full_server import MINIMAL_FULL_TOOLS, mcp as full_mcp
 from integrations.trudi.parser import full_findings, load_full, load_triage, triage_finding
 from pentestgpt_agent.protocol import AdapterRunner, ExecutionStatus, RunLayout, TaskSpec
@@ -49,8 +56,30 @@ async def test_full_server_exposes_only_qualified_official_tools() -> None:
     assert "hash_hash_file" in names
     assert "reason_reason_plan" in names
     assert "dair_dair_assess" in names
+    assert "yara_yara_scan_file" in names
     assert "vol_vol_pslist" not in names
-    assert "misc_chainsaw_hunt" not in names
+    assert "misc_chainsaw_hunt" in names
+
+
+def test_full_child_environment_uses_task_cache_and_project_tools(tmp_path: Path) -> None:
+    environment = _child_environment(tmp_path / "home", tmp_path / "node", "secret")
+
+    assert ".runtime/dfir-tools/bin" in environment["PATH"]
+    assert environment["VOLATILITY_SYMBOLS"].startswith(str(tmp_path / "home"))
+    assert environment["ANTHROPIC_AUTH_TOKEN"] == "secret"
+
+
+def test_full_reserves_bounded_completion_turns_and_disables_triage_tools() -> None:
+    investigation, completion = _turn_budget(60)
+
+    assert (investigation, completion) == (48, 12)
+    assert _claude_turn_limit(investigation) == 47
+    assert _claude_turn_limit(completion) == 11
+    assert "mcp__trudi-sift__misc_write_final_report" in COMPLETION_TOOLS
+    assert "mcp__trudi-sift__misc_export_execution_log" in COMPLETION_TOOLS
+    assert "mcp__trudi-sift__reason_reason_synthesize" in COMPLETION_TOOLS
+    assert "mcp__trudi-sift__dair_dair_assess" in COMPLETION_TOOLS
+    assert not any("yara" in tool or "chainsaw" in tool for tool in COMPLETION_TOOLS)
 
 
 @pytest.mark.asyncio
@@ -139,6 +168,8 @@ def test_full_parser_and_trace_qualification_preserve_real_lineage(tmp_path: Pat
                 "success": True,
                 "ready_to_report": True,
             },
+            {"call_id": 8, "type": "investigation_narration", "message": "triage"},
+            {"call_id": 9, "type": "investigation_narration", "message": "report"},
         ]
     }), encoding="utf-8")
     summary = _trace_summary(trace_path)
@@ -149,10 +180,176 @@ def test_full_parser_and_trace_qualification_preserve_real_lineage(tmp_path: Pat
     findings = full_findings(value, ("trace-evidence",))
 
     assert summary["reason_backend_used"] is True
+    assert summary["primary_turns"] == 2
     assert summary["dair_backend_used"] is True
     assert summary["traceable_finding_count"] == 1
     assert summary["ready_to_report"] is True
     assert findings[0].metadata["linked_call_id"] == 5
+
+
+def test_full_findings_keep_only_canonical_claim_and_exact_iocs() -> None:
+    base_claim = {
+        "kind": "positive",
+        "category": "execution",
+        "act": "presence",
+        "entities_norm": ["powershellexe", "syncps1"],
+        "answers_case_question": True,
+    }
+    value = {
+        "mode": "full",
+        "trace": {
+            "findings": [
+                {
+                    "call_id": 88,
+                    "description": "Initial claim T1059.003.",
+                    "claim": {**base_claim, "techniques": ["T1059.001", "T1059.003"]},
+                },
+                {
+                    "call_id": 153,
+                    "supersedes": 88,
+                    "description": "Reviewed claim T1059.003.",
+                    "claim": {**base_claim, "techniques": ["T1059.001", "T1059.003"]},
+                },
+                {
+                    "call_id": 160,
+                    "supersedes": 153,
+                    "description": "Final evidence-backed malicious chain.",
+                    "confidence": "LIKELY",
+                    "claim": {
+                        **base_claim,
+                        "techniques": ["T1059.001", "T1547.001", "T1053.005", "T1071.001"],
+                    },
+                    "artifact_classes": {"file_content": [71, 74]},
+                    "supporting_evidence": (
+                        'path="C:\\ProgramData\\WinCache\\sync.ps1" '
+                        "sha256=b7f8d6c4a2190e7351f82a4fd6b8079a6cd97d63dc1ed4ad7a3fe87cc9a10b42 "
+                        'source_url="hxxp://cdn-sync.invalid/bootstrap.txt" '
+                        'key="HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\WinCacheSync" '
+                        'task_name="\\WinCacheSync" destination_ip=198.51.100.77 '
+                        'destination_port=8443 destination_domain="cdn-sync.invalid"'
+                    ),
+                },
+            ],
+        },
+    }
+
+    findings = full_findings(value, ("trace-evidence",))
+
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.metadata["trace_call_id"] == 160
+    assert finding.metadata["canonical"] is True
+    assert "T1059.003" not in json.dumps(finding.to_dict())
+    assert finding.metadata["iocs"] == {
+        "ip": ["198.51.100.77"],
+        "port": [8443],
+        "domain": ["cdn-sync.invalid"],
+        "url": ["hxxp://cdn-sync.invalid/bootstrap.txt"],
+        "file_path": ["C:\\ProgramData\\WinCache\\sync.ps1"],
+        "sha256": ["b7f8d6c4a2190e7351f82a4fd6b8079a6cd97d63dc1ed4ad7a3fe87cc9a10b42"],
+        "registry_key": ["HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\WinCacheSync"],
+        "scheduled_task": ["\\WinCacheSync"],
+    }
+    assert finding.metadata["persistence_evidence_scope"] == {
+        "log_observed": {
+            "registry_persistence": True,
+            "scheduled_task_persistence": True,
+        },
+        "independently_verified": {
+            "registry_artifact": False,
+            "task_scheduler_artifact": False,
+        },
+        "artifact_classes": ["file_content"],
+    }
+
+
+def test_full_findings_deduplicate_final_claim_without_supersedes() -> None:
+    claim = {
+        "kind": "positive",
+        "category": "execution",
+        "act": "presence",
+        "entities_norm": ["same"],
+        "answers_case_question": True,
+    }
+    value = {
+        "mode": "full",
+        "trace": {
+            "findings": [
+                {"call_id": 10, "description": "draft", "claim": claim},
+                {"call_id": 11, "description": "final", "claim": claim},
+            ],
+        },
+    }
+
+    findings = full_findings(value, ("trace-evidence",))
+
+    assert len(findings) == 1
+    assert findings[0].metadata["trace_call_id"] == 11
+    assert findings[0].description == "final"
+
+
+def test_full_findings_exclude_ungated_suspected_intermediates() -> None:
+    value = {
+        "mode": "full",
+        "trace": {
+            "findings": [
+                {
+                    "call_id": 45,
+                    "confidence": "SUSPECTED",
+                    "description": "Exploratory persistence observation.",
+                    "claim": {"kind": "positive", "category": "persistence"},
+                },
+                {
+                    "call_id": 151,
+                    "gated_by_evaluate_call_id": 147,
+                    "confidence": "LIKELY",
+                    "description": "Final Reason-gated case conclusion.",
+                    "claim": {
+                        "kind": "positive",
+                        "category": "other",
+                        "answers_case_question": True,
+                    },
+                },
+            ],
+        },
+    }
+
+    findings = full_findings(value, ("trace-evidence",))
+
+    assert len(findings) == 1
+    assert findings[0].metadata["trace_call_id"] == 151
+
+
+def test_full_findings_decode_one_json_escaped_ioc_layer() -> None:
+    value = {
+        "mode": "full",
+        "trace": {
+            "findings": [
+                {
+                    "call_id": 66,
+                    "gated_by_evaluate_call_id": 50,
+                    "claim": {"kind": "positive", "answers_case_question": True},
+                    "supporting_evidence": (
+                        r'path=\"C:\\ProgramData\\WinCache\\sync.ps1\" '
+                        r'source_url=\"hxxp://cdn-sync.invalid/bootstrap.txt\" '
+                        r'key=\"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\WinCacheSync\" '
+                        r'task_name=\"\\WinCacheSync\" '
+                        r'destination_domain=\"cdn-sync.invalid\"'
+                    ),
+                },
+            ],
+        },
+    }
+
+    iocs = full_findings(value, ("trace-evidence",))[0].metadata["iocs"]
+
+    assert iocs["file_path"] == ["C:\\ProgramData\\WinCache\\sync.ps1"]
+    assert iocs["url"] == ["hxxp://cdn-sync.invalid/bootstrap.txt"]
+    assert iocs["registry_key"] == [
+        "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\WinCacheSync"
+    ]
+    assert iocs["scheduled_task"] == ["\\WinCacheSync"]
+    assert iocs["domain"] == ["cdn-sync.invalid"]
 
 
 @pytest.mark.parametrize(

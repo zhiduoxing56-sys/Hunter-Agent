@@ -11,11 +11,13 @@ import argparse
 import fcntl
 import importlib.util
 import json
+import math
 import os
 import shutil
 import signal
 import subprocess
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +30,21 @@ DEEPSEEK_ANTHROPIC_URL = f"{DEEPSEEK_URL}/anthropic"
 DEEPSEEK_MODEL = "deepseek-v4-flash"
 
 _child: subprocess.Popen[str] | None = None
+
+COMPLETION_TOOLS = (
+    "mcp__trudi-sift__misc_record_agent_message",
+    "mcp__trudi-sift__misc_record_disposition",
+    "mcp__trudi-sift__misc_record_finding",
+    "mcp__trudi-sift__misc_export_execution_log",
+    "mcp__trudi-sift__misc_write_final_report",
+    "mcp__trudi-sift__read_read_output",
+    "mcp__trudi-sift__reason_reason_evaluate_finding",
+    "mcp__trudi-sift__reason_reason_confidence_score",
+    "mcp__trudi-sift__reason_reason_cite_check",
+    "mcp__trudi-sift__reason_reason_synthesize",
+    "mcp__trudi-sift__reason_reason_pre_report_check",
+    "mcp__trudi-sift__dair_dair_assess",
+)
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
@@ -86,6 +103,21 @@ def _configure_case(
     }
     _write_json(runtime_home / ".claude" / ".claude.json", trust)
 
+    chainsaw_root = (
+        PROJECT_ROOT
+        / ".runtime"
+        / "dfir-tools"
+        / "chainsaw-2.10.2"
+        / "examples-bundle"
+        / "chainsaw"
+    )
+    sigma_dir = chainsaw_root / "sigma"
+    chainsaw_capability = (
+        "- Chainsaw Sigma EVTX hunting is qualified. Its Sigma rule directory is "
+        f"`{sigma_dir}`."
+        if sigma_dir.is_dir()
+        else "- Chainsaw is unavailable because its qualified Sigma rule set is absent."
+    )
     case_prompt = f"""# Case: {case_id}
 
 **Evidence integrity: never modify the evidence file. All output must be produced through TRUDI MCP under `./analysis/`, `./exports/`, or `./reports/`.**
@@ -104,7 +136,12 @@ Does this individual evidence file establish malicious activity, and what facts 
 
 ## Deployment capability boundary
 
-This is a deliberately minimal TRUDI deployment, not a SIFT workstation. The MCP tools visible to you are the complete set actually qualified for this case. Do not request or invoke tools that are not visible. Disk-image, memory, EVTX, PCAP, Volatility, Plaso, Chainsaw, Sleuth Kit, and EZ Tools evidence is not present and those tools are unavailable.
+This is a deliberately minimal TRUDI deployment, not a SIFT workstation. The MCP tools visible to you are the complete set actually qualified for this case. Select tools autonomously according to the evidence type; do not request or invoke tools that are not visible.
+
+- YARA compile and file/directory/string scanning are qualified when a suitable rule file is available.
+{chainsaw_capability}
+- Volatility memory analysis and tshark MCP execution are not qualified in this deployment.
+- Plaso, Sleuth Kit, and EZ Tools are unavailable.
 
 Follow the official TRUDI lifecycle completely:
 
@@ -135,13 +172,14 @@ Distinguish “not established by this individual file” from “the wider host
 
 def _child_environment(runtime_home: Path, node_bin: Path, key: str) -> dict[str, str]:
     environment = os.environ.copy()
+    forensic_bin = PROJECT_ROOT / ".runtime" / "dfir-tools" / "bin"
     for name in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
         environment.pop(name, None)
     environment.update(
         {
             "HOME": str(runtime_home),
             "CLAUDE_CONFIG_DIR": str(runtime_home / ".claude"),
-            "PATH": f"{node_bin}:{environment.get('PATH', '')}",
+            "PATH": f"{node_bin}:{forensic_bin}:{environment.get('PATH', '')}",
             "DISABLE_AUTOUPDATER": "1",
             "DISABLE_TELEMETRY": "1",
             "ANTHROPIC_BASE_URL": DEEPSEEK_ANTHROPIC_URL,
@@ -168,6 +206,7 @@ def _child_environment(runtime_home: Path, node_bin: Path, key: str) -> dict[str
             "TRUDI_REASON_TIMEOUT": os.environ.get("TRUDI_REASON_TIMEOUT", "300"),
             "TRUDI_DAIR_TIMEOUT": os.environ.get("TRUDI_DAIR_TIMEOUT", "300"),
             "TRUDI_DEFAULT_TIMEOUT": os.environ.get("TRUDI_DEFAULT_TIMEOUT", "300"),
+            "VOLATILITY_SYMBOLS": str(runtime_home / ".cache" / "volatility3" / "symbols"),
         }
     )
     return environment
@@ -182,6 +221,104 @@ def _terminate_child(_signum: int, _frame: Any) -> None:
     raise SystemExit(143)
 
 
+def _turn_budget(total_turns: int) -> tuple[int, int]:
+    """Reserve 20% of a bounded Primary budget for report completion."""
+    if total_turns < 10:
+        raise ValueError("TRUDI Full max turns must be at least 10")
+    completion = max(2, math.ceil(total_turns * 0.20))
+    return total_turns - completion, completion
+
+
+def _claude_turn_limit(turn_budget: int) -> int:
+    # Claude Code includes the initiating prompt in num_turns.  Passing N - 1
+    # keeps the two phase-reported turn counts within Hunter's total budget.
+    return max(1, turn_budget - 1)
+
+
+def _primary_command(
+    args: argparse.Namespace,
+    *,
+    mcp_path: Path,
+    prompt: str,
+    turn_budget: int,
+    session_id: str,
+    resume: bool,
+    allowed_tools: tuple[str, ...],
+) -> list[str]:
+    command = [
+        str(args.claude.resolve()),
+        "-p",
+        prompt,
+        "--mcp-config",
+        str(mcp_path),
+        "--strict-mcp-config",
+        "--tools",
+        "",
+        "--allowedTools",
+        ",".join(allowed_tools),
+        "--permission-mode",
+        "dontAsk",
+        "--setting-sources",
+        "user,project,local",
+        "--max-turns",
+        str(_claude_turn_limit(turn_budget)),
+        "--output-format",
+        "json",
+        "--model",
+        DEEPSEEK_MODEL,
+        "--effort",
+        "low",
+    ]
+    command.extend(["--resume", session_id] if resume else ["--session-id", session_id])
+    return command
+
+
+def _run_primary_phase(
+    command: list[str],
+    *,
+    case_dir: Path,
+    environment: dict[str, str],
+    timeout: float,
+) -> tuple[str, str, int, bool]:
+    global _child
+    _child = subprocess.Popen(
+        command,
+        cwd=case_dir,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    timed_out = False
+    try:
+        stdout, stderr = _child.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        os.killpg(_child.pid, signal.SIGTERM)
+        try:
+            stdout, stderr = _child.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            os.killpg(_child.pid, signal.SIGKILL)
+            stdout, stderr = _child.communicate()
+    returncode = int(_child.returncode or 0)
+    _child = None
+    return stdout, stderr, returncode, timed_out
+
+
+def _parse_primary(stdout: str) -> dict[str, Any] | None:
+    try:
+        value = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _primary_model(primary: dict[str, Any] | None) -> str:
+    usage = (primary or {}).get("modelUsage", {})
+    return next(iter(usage), "") if isinstance(usage, dict) else ""
+
+
 def _trace_summary(trace_path: Path) -> dict[str, Any]:
     trace = json.loads(trace_path.read_text(encoding="utf-8"))
     entries = trace.get("entries")
@@ -191,6 +328,9 @@ def _trace_summary(trace_path: Path) -> dict[str, Any]:
     dair = [item for item in entries if item.get("type") == "dair_call"]
     tools = [item for item in entries if item.get("type") == "tool_call"]
     findings = [item for item in entries if item.get("type") == "finding"]
+    primary_turns = [
+        item for item in entries if item.get("type") == "investigation_narration"
+    ]
     pre_report = [
         item for item in reason if item.get("tool") == "reason_pre_report_check"
     ]
@@ -202,6 +342,7 @@ def _trace_summary(trace_path: Path) -> dict[str, Any]:
     ]
     return {
         "entry_count": len(entries),
+        "primary_turns": len(primary_turns),
         "reason_calls": len(reason),
         "dair_calls": len(dair),
         "mcp_tool_calls": len(tools),
@@ -268,68 +409,109 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         expected_sha256=args.expected_sha256,
     )
     environment = _child_environment(runtime_home, args.node_bin.resolve(), key)
-    command = [
-        str(args.claude.resolve()),
-        "-p",
-        (
-            "Investigate this case autonomously now. Follow the complete official "
-            "TRUDI lifecycle and do not stop until the gated final report and "
-            "exported trace exist, or an honest non-recoverable blocker is recorded."
+    investigation_budget, completion_budget = _turn_budget(args.max_turns)
+    session_id = str(uuid.uuid4())
+    investigation_command = _primary_command(
+        args,
+        mcp_path=mcp_path,
+        prompt=(
+            "Investigate this case autonomously using the official TRUDI lifecycle. "
+            "Prioritize high-information evidence and avoid repeating a successful "
+            "tool call unless a specific unresolved hypothesis requires it. Record "
+            "and Reason-review supported Findings as you proceed. A separate reserved "
+            "completion phase will perform final synthesis, Report-stage DAIR, report "
+            "writing, and trace export, so do not consume turns on low-yield repetition."
         ),
-        "--mcp-config",
-        str(mcp_path),
-        "--strict-mcp-config",
-        "--tools",
-        "",
-        "--allowedTools",
-        "mcp__trudi-sift__*",
-        "--permission-mode",
-        "dontAsk",
-        "--setting-sources",
-        "user,project,local",
-        "--max-turns",
-        str(args.max_turns),
-        "--output-format",
-        "json",
-        "--model",
-        DEEPSEEK_MODEL,
-        "--effort",
-        "low",
-    ]
+        turn_budget=investigation_budget,
+        session_id=session_id,
+        resume=False,
+        allowed_tools=("mcp__trudi-sift__*",),
+    )
+    completion_prompt = (
+        "ENTER RESERVED COMPLETION PHASE NOW. Preserve every existing Finding, Evidence, "
+        "disposition, and Trace entry. Do not collect new evidence and do not call YARA, "
+        "Chainsaw, strings, stat, file identification, or hashing tools. Use only existing "
+        "Trace and exported tool results. Immediately: (1) Reason-review and synthesize the "
+        "current canonical Findings; (2) call DAIR for the Report stage using the argument "
+        "shape required by the tool, including phase_stack='Report' as a string; (3) record "
+        "honest dispositions for evidence gaps and distinguish 'not established by this "
+        "file' from 'the host is clean'; (4) run reason_pre_report_check and resolve only "
+        "reporting/citation blockers; (5) write the official final report and export both "
+        "JSON and Markdown traces. If evidence cannot support a malicious verdict, write an "
+        "explicit evidence-insufficient partial conclusion instead of omitting the report. "
+        "Do not restart triage or repeat investigative tool calls."
+    )
     started = time.monotonic()
-    timed_out = False
+    completion_timeout = max(180.0, args.timeout * completion_budget / args.max_turns)
+    investigation_timeout = max(60.0, args.timeout - completion_timeout)
     with args.lock.open("a+", encoding="utf-8") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        _child = subprocess.Popen(
-            command,
-            cwd=case_dir,
-            env=environment,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
+        investigation_stdout, investigation_stderr, investigation_returncode, investigation_timed_out = (
+            _run_primary_phase(
+                investigation_command,
+                case_dir=case_dir,
+                environment=environment,
+                timeout=investigation_timeout,
+            )
         )
-        try:
-            stdout, stderr = _child.communicate(timeout=args.timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            os.killpg(_child.pid, signal.SIGTERM)
-            try:
-                stdout, stderr = _child.communicate(timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(_child.pid, signal.SIGKILL)
-                stdout, stderr = _child.communicate()
-        returncode = _child.returncode
-        _child = None
-    args.primary_stdout.write_text(stdout, encoding="utf-8")
-    args.primary_stderr.write_text(stderr, encoding="utf-8")
-    primary: dict[str, Any] | None = None
-    try:
-        value = json.loads(stdout)
-        if isinstance(value, dict):
-            primary = value
-    except json.JSONDecodeError:
-        pass
+        investigation_primary = _parse_primary(investigation_stdout)
+
+        live_trace = case_dir / "analysis" / f"{args.case_id}_trace.json"
+        investigation_summary = _trace_summary(live_trace) if live_trace.is_file() else {}
+        reports = sorted((case_dir / "reports").glob("*.md"))
+        report = next((path for path in reports if not path.name.endswith("_trace.md")), None)
+        exported_json = case_dir / "reports" / f"{args.case_id}_trace.json"
+        exported_md = case_dir / "reports" / f"{args.case_id}_trace.md"
+        already_complete = bool(
+            investigation_summary.get("ready_to_report")
+            and report is not None
+            and exported_json.is_file()
+            and exported_md.is_file()
+        )
+
+        completion_stdout = ""
+        completion_stderr = ""
+        completion_returncode = 0
+        completion_timed_out = False
+        completion_primary: dict[str, Any] | None = None
+        if not already_complete:
+            completion_command = _primary_command(
+                args,
+                mcp_path=mcp_path,
+                prompt=completion_prompt,
+                turn_budget=completion_budget,
+                session_id=session_id,
+                resume=True,
+                allowed_tools=COMPLETION_TOOLS,
+            )
+            elapsed = time.monotonic() - started
+            remaining_timeout = max(60.0, args.timeout - elapsed)
+            completion_stdout, completion_stderr, completion_returncode, completion_timed_out = (
+                _run_primary_phase(
+                    completion_command,
+                    case_dir=case_dir,
+                    environment=environment,
+                    timeout=remaining_timeout,
+                )
+            )
+            completion_primary = _parse_primary(completion_stdout)
+
+    phase_log = {
+        "investigation": investigation_primary
+        if investigation_primary is not None
+        else {"unparsed_stdout": investigation_stdout},
+        "completion": completion_primary
+        if completion_primary is not None
+        else ({"unparsed_stdout": completion_stdout} if completion_stdout else None),
+    }
+    args.primary_stdout.write_text(json.dumps(phase_log, indent=2), encoding="utf-8")
+    args.primary_stderr.write_text(
+        "[investigation]\n"
+        + investigation_stderr
+        + "\n[completion]\n"
+        + completion_stderr,
+        encoding="utf-8",
+    )
 
     live_trace = case_dir / "analysis" / f"{args.case_id}_trace.json"
     trace_summary: dict[str, Any] = {}
@@ -339,16 +521,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     report = next((path for path in reports if not path.name.endswith("_trace.md")), None)
     exported_json = case_dir / "reports" / f"{args.case_id}_trace.json"
     exported_md = case_dir / "reports" / f"{args.case_id}_trace.md"
-    model_usage = (primary or {}).get("modelUsage", {})
-    primary_model = next(iter(model_usage), "") if isinstance(model_usage, dict) else ""
-    primary_ok = bool(
-        returncode == 0
-        and primary
-        and primary.get("is_error") is False
-        and primary_model == DEEPSEEK_MODEL
+    primary = completion_primary or investigation_primary
+    primary_model = _primary_model(completion_primary) or _primary_model(investigation_primary)
+    primary_runtime_verified = bool(
+        primary_model == DEEPSEEK_MODEL
+        and investigation_primary
+        and investigation_primary.get("session_id") == session_id
     )
+    investigation_turns = int(investigation_summary.get("primary_turns", 0) or 0)
+    total_turns = int(trace_summary.get("primary_turns", 0) or 0)
+    completion_turns = max(0, total_turns - investigation_turns)
     full_success = bool(
-        primary_ok
+        primary_runtime_verified
         and trace_summary.get("reason_backend_used")
         and trace_summary.get("dair_backend_used")
         and trace_summary.get("reason_calls", 0) >= 1
@@ -360,11 +544,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         and exported_json.is_file()
         and exported_md.is_file()
     )
-    failure = None if full_success else _classify_failure(stderr, primary, timed_out=timed_out)
+    returncode = completion_returncode if completion_primary is not None else investigation_returncode
+    timed_out = completion_timed_out or (investigation_timed_out and completion_primary is None)
+    combined_stderr = f"{investigation_stderr}\n{completion_stderr}"
+    failure = None if full_success else _classify_failure(
+        combined_stderr, primary, timed_out=timed_out
+    )
     safe_primary = {
         "is_error": (primary or {}).get("is_error"),
-        "session_id": (primary or {}).get("session_id"),
-        "num_turns": (primary or {}).get("num_turns", 0),
+        "session_id": session_id,
+        "num_turns": total_turns,
         "stop_reason": (primary or {}).get("stop_reason"),
         "terminal_reason": (primary or {}).get("terminal_reason"),
         "model": primary_model,
@@ -376,14 +565,23 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "case_id": args.case_id,
         "evidence_path": str(evidence),
         "expected_sha256": args.expected_sha256,
-        "primary_runtime_used": primary_ok,
+        "primary_runtime_used": primary_runtime_verified,
         "primary_model": primary_model,
-        "primary_model_calls": int((primary or {}).get("num_turns", 0) or 0),
+        "primary_model_calls": total_turns,
         "reason_backend_used": bool(trace_summary.get("reason_backend_used")),
         "dair_backend_used": bool(trace_summary.get("dair_backend_used")),
         "duration_seconds": time.monotonic() - started,
         "returncode": returncode,
         "timed_out": timed_out,
+        "turn_budget": {
+            "total": args.max_turns,
+            "investigation_budget": investigation_budget,
+            "completion_reserved": completion_budget,
+            "investigation_used": investigation_turns,
+            "completion_used": completion_turns,
+            "total_used": total_turns,
+            "completion_phase_used": completion_primary is not None,
+        },
         "trace": trace_summary,
         "paths": {
             "case_dir": str(case_dir),
