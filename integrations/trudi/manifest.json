@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "name": "trudi",
+  "mode": "mcp",
+  "workdir": ".",
+  "start": [
+    "third_party/trudi/.venv/bin/python",
+    "integrations/trudi/runner.py",
+    "--server",
+    "third_party/trudi/server.py",
+    "--evidence",
+    "{target}",
+    "--case-dir",
+    "{artifacts}/trudi-case",
+    "--output",
+    "{artifacts}/trudi_result.json"
+  ],
+  "result": "artifacts/trudi_result.json",
+  "timeout": 300,
+  "environment": {},
+  "required_environment": [],
+  "metadata": {
+    "upstream": "https://github.com/nebulae/trudi",
+    "upstream_commit": "10559b13e01c06107165cc22db6ee17ec3c59f6c",
+    "transport": "official_fastmcp_stdio",
+    "scope": "lightweight_file_triage"
+  }
+}

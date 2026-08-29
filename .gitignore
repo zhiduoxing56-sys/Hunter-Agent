@@ -14,6 +14,7 @@ __pycache__/
 # Runtime
 logs/
 runs/
+.runtime/
 artifacts/private/
 
 # Security artifacts

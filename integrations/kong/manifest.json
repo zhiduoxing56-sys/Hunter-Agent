@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "name": "kong",
+  "mode": "cli",
+  "workdir": "third_party/kong",
+  "start": [
+    ".venv/bin/kong",
+    "analyze",
+    "{target}",
+    "--headless",
+    "--output",
+    "{artifacts}/kong",
+    "--format",
+    "json",
+    "--format",
+    "source"
+  ],
+  "result": "artifacts/kong/analysis.json",
+  "timeout": 1800,
+  "environment": {},
+  "required_environment": [],
+  "metadata": {
+    "upstream": "https://github.com/amruth-sn/kong",
+    "upstream_commit": "8c4ee4bf52e0eb9efc3a0b22ad6da03387543fd2",
+    "transport": "official_cli_subprocess"
+  }
+}
